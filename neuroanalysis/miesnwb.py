@@ -21,6 +21,7 @@ class MiesNwb(Dataset):
         self._timeseries = None
         self._groups = None
         self._notebook = None
+        self._nwbversion = None
         self.open()
         
     @property
@@ -28,6 +29,17 @@ class MiesNwb(Dataset):
         if self._hdf is None:
             self.open()
         return self._hdf
+
+    def nwb_version(self):
+        f=self.hdf
+        nwb_version="unknown"
+        if "nwb_version" in f:
+            nwb_version = f["nwb_version"][()].item()[4:]
+        elif "nwb_version" in f.attrs:   # in version 2 this is an attribute
+            nwb_version = f.attrs["nwb_version"].astype(str)
+        #print (nwb_version)
+        self._nwbversion=nwb_version
+        return self._nwbversion
 
     def notebook(self):
         """Return compiled data from the lab notebook.
@@ -68,18 +80,18 @@ class MiesNwb(Dataset):
                         is_sweep_record = True
                     else:
                         is_tp_record = True
-                elif i < nb.shape[0] - 1:
+                #elif i < nb.shape[0] - 1:
                     # Older files may be missing EntrySourceType. In this case, we can identify TP blocks
                     # as two records containing a "TP Peak Resistance" value in the first record followed
                     # by a "TP Pulse Duration" value in the second record.
-                    tp_peak = rec[nb_fields['TP Peak Resistance']]
-                    if any(np.isfinite(tp_peak)):
-                        tp_dur = nb[i+1][nb_fields['TP Pulse Duration']]
-                        if any(np.isfinite(tp_dur)):
-                            next(nb_iter)
-                            is_tp_record = True
-                    if not is_tp_record:
-                        is_sweep_record = np.isfinite(sweep_num)
+                    #tp_peak = rec[nb_fields['TP Peak Resistance']]
+                    #if any(np.isfinite(tp_peak)):
+                        #tp_dur = nb[i+1][nb_fields['TP Pulse Duration']]
+                        #if any(np.isfinite(tp_dur)):
+                            #next(nb_iter)
+                            #is_tp_record = True
+                    #if not is_tp_record:
+                        #is_sweep_record = np.isfinite(sweep_num)
 
                 if is_tp_record:
                     rec = np.array(rec)
@@ -174,16 +186,32 @@ class MiesNwb(Dataset):
     def contents(self):
         """A list of all sweeps in this file.
         """
+        if self.nwb_version()=='2.2.4':
+            acq_path='acquisition'
+        else:
+            acq_path='acquisition/timeseries'
         if self._sweeps is None:
             # sort all timeseries groups into sweeps / channels
             self._timeseries = {}
-            for ts_name, ts in self.hdf['acquisition/timeseries'].items():
-                src = dict([field.split('=') for field in ts.attrs['source'].split(';')])
-                sweep = int(src['Sweep'])
-                ad_chan = int(src['AD'])
-                src['hdf_group_name'] = 'acquisition/timeseries/' + ts_name
-                self._timeseries.setdefault(sweep, {})[ad_chan] = src
-            
+
+            if self.nwb_version()!='2.2.4':
+                for ts_name, ts in self.hdf[acq_path].items():
+                    src = dict([field.split('=') for field in ts.attrs['source'].astype('str').split(';')])
+                    sweep = int(src['Sweep'])
+                    ad_chan = int(src['AD'])
+                    src['hdf_group_name'] = acq_path + '/' + ts_name
+                    self._timeseries.setdefault(sweep, {})[ad_chan] = src
+            else:
+                for ts_name, ts in self.hdf[acq_path].items():
+                    sweep = int(ts.attrs['sweep_number'])
+                    ad_chan = int(ts_name[ts_name.find("AD")+2:])
+                    src = dict()
+                    src['Sweep'] = sweep
+                    src['AD'] = ad_chan
+                    src['hdf_group_name'] = acq_path + '/' + ts_name
+                    ## note other objects, ElectrodeName, ElectrodeNumber in 'source' in v1
+                    self._timeseries.setdefault(sweep, {})[ad_chan] = src
+
             sweep_ids = sorted(list(self._timeseries.keys()))
             self._sweeps = []
             for sweep_id in sweep_ids:
@@ -323,7 +351,11 @@ class MiesRecording(PatchClampRecording):
         self._hdf_group_name = sweep._channel_keys[ad_chan]['hdf_group_name']
         self._hdf_group = None
         self._da_chan = None
-        headstage_id = int(self.hdf_group['electrode_name'][()][0].split('_')[1])
+        if "electrode_name" in self.hdf_group: #if nwb v1
+            headstage_id = int(self.hdf_group['electrode_name'][()][0].split('_')[1])
+        elif "electrode" in self.hdf_group: #if nwb v2
+            print (self.hdf_group)
+            headstage_id = int(self.hdf_group['electrode/description'][()][0].split(' ')[1])
         
         PatchClampRecording.__init__(self, device_type='MultiClamp 700', device_id=headstage_id,
                                      sync_recording=sweep)

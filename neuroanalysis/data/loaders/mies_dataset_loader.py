@@ -33,12 +33,22 @@ class MiesNwbLoader(DatasetLoader):
     def time_series(self):
         if self._time_series is None:
             self._time_series = {}
-            for ts_name, ts in self.hdf['acquisition/timeseries'].items():
-                src = dict([field.split('=') for field in ts.attrs['source'].split(';')])
-                sweep = int(src['Sweep'])
-                ad_chan = int(src['AD'])
-                src['hdf_group_name'] = 'acquisition/timeseries/' + ts_name
-                self._time_series.setdefault(sweep, {})[ad_chan] = src
+            if "acquisition/timeseries" in self.hdf:
+                for ts_name, ts in self.hdf['acquisition/timeseries'].items():
+                    src = dict([field.split('=') for field in ts.attrs['source'].astype('str').split(';')])
+                    sweep = int(src['Sweep'])
+                    ad_chan = int(src['AD'])
+                    src['hdf_group_name'] = 'acquisition/timeseries/' + ts_name
+                    self._time_series.setdefault(sweep, {})[ad_chan] = src
+            else:
+                for ts_name, ts in self.hdf['acquisition'].items():
+                    sweep = int(ts.attrs['sweep_number'])
+                    ad_chan = int(ts_name[ts_name.find("AD")+2:])
+                    src = dict()
+                    src['Sweep'] = sweep
+                    src['AD'] = ad_chan
+                    src['hdf_group_name'] =  'acquisition/' + ts_name
+                    self._time_series.setdefault(sweep, {})[ad_chan] = src
         return self._time_series
 
     @property
@@ -75,20 +85,70 @@ class MiesNwbLoader(DatasetLoader):
 
         ### Hardcode this now, figure out configuration system when needed
         device_map = {
-            'AD6': 'Fidelity',
-            'TTL1_0': 'Prairie_Command',
-            'TTL1_1': 'LED-470nm',
-            'TTL1_2': 'LED-590nm'
+            'AD2': 'AD2',
+            'AD3': 'AD3',
+            'TTL0': 'Polygon400 command',
+            'TTL1': 'Polygon Driver command',
+            'TTL2': 'LED-470nm'
         }
 
         for ch, meta in self.time_series[sweep_id].items():
-            if 'data_%05d_AD%d' %(sweep_id, ch) in self.hdf['acquisition/timeseries'].keys():
-                hdf_group = self.hdf['acquisition/timeseries/data_%05d_AD%d' %(sweep_id, ch)]
+            if 'acquisition/timeseries' in self.hdf:
+                acq_path='acquisition/timeseries'
+            else:
+                acq_path='acquisition'
+            if 'data_%05d_AD%d' %(sweep_id, ch) in self.hdf[acq_path].keys():
+                hdf_group = self.hdf[acq_path]['data_%05d_AD%d' %(sweep_id, ch)]
 
                 ### this channel is a patch-clamp headstage
-                if 'electrode_name' in hdf_group: 
+                if 'electrode_name' in hdf_group: #if nwb v1
                     #rec = OptoMiesRecording(self, sweep_id, ch)
                     device_id = int(hdf_group['electrode_name'][()][0].split('_')[1])
+
+                    nb = self.notebook[sweep_id][device_id]
+                    meta = {}
+                    meta['holding_potential'] = (
+                        None if nb['V-Clamp Holding Level'] is None
+                        else nb['V-Clamp Holding Level'] * 1e-3
+                    )
+                    meta['holding_current'] = (
+                        None if nb['I-Clamp Holding Level'] is None
+                        else nb['I-Clamp Holding Level'] * 1e-12
+                    )   
+                    meta['notebook'] = nb
+                    if nb['Clamp Mode'] == 0:
+                        meta['clamp_mode'] = 'vc'
+                    else:
+                        meta['clamp_mode'] = 'ic'
+                        meta['bridge_balance'] = (
+                            0.0 if nb['Bridge Bal Enable'] == 0.0 or nb['Bridge Bal Value'] is None
+                            else nb['Bridge Bal Value'] * 1e6
+                        )
+                    meta['lpf_cutoff'] = nb['LPF Cutoff']
+                    offset = nb['Pipette Offset']  # sometimes the pipette offset recording can fail??
+                    meta['pipette_offset'] = None if offset is None else offset * 1e-3
+                    meta['sweep_name'] = 'data_%05d_AD%d' %(sweep_id, ch)
+                    start_time = parser.igorpro_date(nb['TimeStamp'])
+                    dt = hdf_group['data'].attrs['IGORWaveScaling'][1,0] / 1000.
+
+
+                    rec = PatchClampRecording(### this makes TSeries when we make Recordings instead of waiting until recordings ask for their TSeries -- which is something I've been trying to get away from in the rest of this refactor
+                        channels={'primary':TSeries(channel_id='primary', dt=dt, start_time=start_time, loader=self), 
+                                  'command':TSeries(channel_id='command', dt=dt, start_time=start_time, loader=self)},
+                        start_time=start_time,
+                        device_type="MultiClamp 700",
+                        device_id=device_id,
+                        sync_recording=sync_rec,
+                        loader=self,
+                        **meta
+                        )
+                    rec['primary']._recording = rec
+                    rec['command']._recording = rec
+
+                    recordings[rec.device_id] = rec
+
+                elif 'electrode' in hdf_group: #if nwb v2
+                    device_id = int(hdf_group['electrode/description'][()][0].split(' ')[1])
 
                     nb = self.notebook[sweep_id][device_id]
                     meta = {}
@@ -200,11 +260,14 @@ class MiesNwbLoader(DatasetLoader):
     def get_tseries_data(self, tseries):
         rec = tseries.recording
         chan = tseries.channel_id
-
+        if 'acquisition/timeseries' in self.hdf:
+            acq_path='acquisition/timeseries'
+        else:
+            acq_path='acquisition'
         if chan == 'primary':
             scale = 1e-12 if rec.clamp_mode == 'vc' else 1e-3
             #data = np.array(rec.primary_hdf) * scale
-            data = np.array(self.hdf['acquisition']['timeseries'][rec.meta['sweep_name']]['data'])*scale
+            data = np.array(self.hdf[acq_path][rec.meta['sweep_name']]['data'])*scale
 
         elif chan == 'command':
             scale = 1e-3 if rec.clamp_mode == 'vc' else 1e-12
@@ -221,7 +284,7 @@ class MiesNwbLoader(DatasetLoader):
 
         elif chan == 'reporter':
             if 'AD' in rec.meta['sweep_name']:
-                data = np.array(self.hdf['acquisition']['timeseries'][rec.meta['sweep_name']]['data'])
+                data = np.array(self.hdf[acq_path][rec.meta['sweep_name']]['data'])
             elif 'TTL' in rec.meta['sweep_name']:
                 data = np.array(self.hdf['stimulus']['presentation'][rec.meta['sweep_name']]['data'])
             else:
@@ -249,12 +312,17 @@ class MiesNwbLoader(DatasetLoader):
         for s in stims:
             if 'TTL' in s:
                 continue
-            elec = hdf[s]['electrode_name'][()][0]
-            if elec == 'electrode_%d' % rec.device_id:
-                da_chan = int(s.split('_')[-1][2:])
+            try:
+                elec = hdf[s]['electrode_name'][()][0]
+                if elec == 'electrode_%d' % rec.device_id:
+                    da_chan = int(s.split('_')[-1][2:])
+            except:
+                elec = hdf[s]['electrode/description'][()][0]
+                if elec == 'Headstage %d' % rec.device_id:
+                    da_chan = int(s.split('_')[-1][2:])
 
         if da_chan is None:
-            raise Exception("Cannot find DA channel for headstage %d" % self.device_id)
+            raise Exception("Cannot find DA channel for headstage %d" % rec.device_id)
 
         return da_chan
 
@@ -293,11 +361,20 @@ class MiesNwbLoader(DatasetLoader):
         return nearest
 
     def load_stimulus(self, rec):
-        if isinstance(rec, PatchClampRecording):
-            desc = self.hdf['acquisition/timeseries'][rec.meta['sweep_name']]['stimulus_description'][()][0]
-            return stimuli.LazyLoadStimulus(description=desc, loader=self, source=rec)
-        else:
-            raise Exception('not implemented yet')
+        if 'acquisition/timeseries' in self.hdf: #nwb v1
+            acq_path='acquisition/timeseries'
+            if isinstance(rec, PatchClampRecording):
+                desc = self.hdf[acq_path][rec.meta['sweep_name']]['stimulus_description'][()][0]
+                return stimuli.LazyLoadStimulus(description=desc, loader=self, source=rec)
+            else:
+                raise Exception('not implemented yet')
+        else: #nwb v2
+            acq_path='acquisition'
+            if isinstance(rec, PatchClampRecording):
+                desc = self.hdf[acq_path][rec.meta['sweep_name']].attrs['stimulus_description'].astype(str)
+                return stimuli.LazyLoadStimulus(description=desc, loader=self, source=rec)
+            else:
+                raise Exception('not implemented yet')
         #return stimuli.Stimulus(description=desc, items=self.load_stimulus_items(rec))
 
     def load_stimulus_items(self, rec):

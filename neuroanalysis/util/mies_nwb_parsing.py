@@ -50,18 +50,18 @@ def parse_lab_notebook(hdf):
                 is_sweep_record = True
             else:
                 is_tp_record = True
-        elif i < nb.shape[0] - 1:
+        #elif i < nb.shape[0] - 1:
             # Older files may be missing EntrySourceType. In this case, we can identify TP blocks
             # as two records containing a "TP Peak Resistance" value in the first record followed
             # by a "TP Pulse Duration" value in the second record.
-            tp_peak = rec[nb_fields['TP Peak Resistance']]
-            if any(np.isfinite(tp_peak)):
-                tp_dur = nb[i+1][nb_fields['TP Pulse Duration']]
-                if any(np.isfinite(tp_dur)):
-                    next(nb_iter)
-                    is_tp_record = True
-            if not is_tp_record:
-                is_sweep_record = np.isfinite(sweep_num)
+            #tp_peak = rec[nb_fields['TP Peak Resistance']]
+            #if any(np.isfinite(tp_peak)):
+                #tp_dur = nb[i+1][nb_fields['TP Pulse Duration']]
+                #if any(np.isfinite(tp_dur)):
+                    #next(nb_iter)
+                    #is_tp_record = True
+            #if not is_tp_record:
+                #is_sweep_record = np.isfinite(sweep_num)
 
         if is_tp_record:
             rec = np.array(rec)
