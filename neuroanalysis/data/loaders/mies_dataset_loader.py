@@ -374,8 +374,9 @@ class MiesNwbLoader(DatasetLoader):
                 desc = self.hdf[acq_path][rec.meta['sweep_name']].attrs['stimulus_description'].astype(str)
                 return stimuli.LazyLoadStimulus(description=desc, loader=self, source=rec)
             else:
-                raise Exception('not implemented yet')
-        #return stimuli.Stimulus(description=desc, items=self.load_stimulus_items(rec))
+                desc = self.hdf['stimulus/presentation'][rec.meta['sweep_name']].attrs['stimulus_description'].astype(str)
+                return stimuli.LazyLoadStimulus(description=desc, loader=self, source=rec)
+                #raise Exception('not implemented yet')
 
     def load_stimulus_items(self, rec):
         items = []
