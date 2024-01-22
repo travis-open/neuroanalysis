@@ -87,8 +87,12 @@ class MiesNwbLoader(DatasetLoader):
         device_map = {
             'AD2': 'AD2',
             'AD3': 'AD3',
-            'TTL0': 'Polygon400 command',
-            'TTL1': 'Polygon Driver command',
+            'AD4':'AD4',
+            'AD5':'AD5',
+            'AD6':'AD6',
+            'AD7':'AD7',
+            'TTL0': 'Polygon400',
+            'TTL1': 'Polygon Driver',
             'TTL2': 'LED-470nm'
         }
 
