@@ -1,4 +1,5 @@
 import h5py
+from ...util import h5py_wrapper
 import numpy as np
 from collections import OrderedDict
 from neuroanalysis.data.dataset import SyncRecording, PatchClampRecording, Recording, TSeries
@@ -27,6 +28,7 @@ class MiesNwbLoader(DatasetLoader):
     def hdf(self):
         if self._hdf is None:
             self._hdf = h5py.File(self._file_path, 'r')
+            #self._hdf = h5py_wrapper.File(self._file_path, 'r')
         return self._hdf
 
     @property
@@ -85,12 +87,13 @@ class MiesNwbLoader(DatasetLoader):
 
         ### Hardcode this now, figure out configuration system when needed
         device_map = {
+            
             'AD2': 'AD2',
             'AD3': 'AD3',
-            'AD4':'AD4',
-            'AD5':'AD5',
-            'AD6':'AD6',
-            'AD7':'AD7',
+            'AD4': 'AD4',
+            'AD5': 'AD5',
+            'AD6': 'AD6',
+            'AD7': 'AD7',
             'TTL0': 'Polygon400',
             'TTL1': 'Polygon Driver',
             'TTL2': 'LED-470nm'
@@ -152,8 +155,10 @@ class MiesNwbLoader(DatasetLoader):
                     recordings[rec.device_id] = rec
 
                 elif 'electrode' in hdf_group: #if nwb v2
-                    device_id = int(hdf_group['electrode/description'][()][0].split(' ')[1])
-
+                    try:
+                        device_id = int(hdf_group['electrode/description'][()][0].split(' ')[1])
+                    except:
+                        device_id = int(hdf_group['electrode/description'].asstr()[()][0].split(' ')[1])
                     nb = self.notebook[sweep_id][device_id]
                     meta = {}
                     meta['holding_potential'] = (
@@ -321,7 +326,7 @@ class MiesNwbLoader(DatasetLoader):
                 if elec == 'electrode_%d' % rec.device_id:
                     da_chan = int(s.split('_')[-1][2:])
             except:
-                elec = hdf[s]['electrode/description'][()][0]
+                elec = hdf[s]['electrode/description'].asstr()[()][0]
                 if elec == 'Headstage %d' % rec.device_id:
                     da_chan = int(s.split('_')[-1][2:])
 

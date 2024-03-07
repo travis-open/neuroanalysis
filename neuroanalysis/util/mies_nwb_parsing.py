@@ -25,7 +25,8 @@ def parse_lab_notebook(hdf):
     sweep_entries = OrderedDict()
     tp_entries = []
     device = list(hdf['general/devices'].keys())[0].split('_',1)[-1]
-    nb_keys = hdf['general']['labnotebook'][device]['numericalKeys'][0]
+    #nb_keys = hdf['general']['labnotebook'][device]['numericalKeys'][0]
+    nb_keys = hdf['general']['labnotebook'][device]['numericalKeys'].asstr()[0]
     nb_fields = OrderedDict([(k, i) for i,k in enumerate(nb_keys)])
 
     # convert notebook to array here, otherwise we incur the decompression cost for the entire
@@ -104,9 +105,11 @@ def parse_lab_notebook(hdf):
         sweep_entries[swid] = meta
 
     # Load textual keys in a similar way 
-    text_nb_keys = hdf['general']['labnotebook'][device]['textualKeys'][0]
+    #text_nb_keys = hdf['general']['labnotebook'][device]['textualKeys'][0]
+    text_nb_keys = hdf['general']['labnotebook'][device]['textualKeys'].asstr()[0]
     text_nb_fields = OrderedDict([(k, i) for i,k in enumerate(text_nb_keys)])
-    text_nb = np.array(hdf['general']['labnotebook'][device]['textualValues'])
+    #text_nb = np.array(hdf['general']['labnotebook'][device]['textualValues'])
+    text_nb = np.array(hdf['general']['labnotebook'][device]['textualValues']).astype(str)
     entry_source_type_index = text_nb_fields.get('EntrySourceType', None)
 
     for rec in text_nb:
